@@ -83,7 +83,8 @@ RUN wget -q https://raw.githubusercontent.com/bata24/gef/dev/install-uv.sh -O- |
 # pwntools — CTF framework (ROP builder, packing, tubes, shellcraft)
 # ROPgadget — ROP gadget finder (different heuristics than ropper)
 # vmlinux-to-elf — recover kallsyms from stripped kernel → symbolized ELF
-# NOTE: bata24/gef install-uv.sh uses uv, not pip3
+# NOTE: uv is installed by gef at /root/.local/bin/uv
+ENV PATH="/root/.local/bin:${PATH}"
 RUN uv pip install --system --no-cache \
     pwntools \
     ROPgadget \
