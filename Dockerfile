@@ -83,11 +83,12 @@ RUN wget -q https://raw.githubusercontent.com/bata24/gef/dev/install-uv.sh -O- |
 # pwntools — CTF framework (ROP builder, packing, tubes, shellcraft)
 # ROPgadget — ROP gadget finder (different heuristics than ropper)
 # vmlinux-to-elf — recover kallsyms from stripped kernel → symbolized ELF
-RUN pip3 install --no-cache-dir --break-system-packages \
+# NOTE: bata24/gef install-uv.sh uses uv, not pip3
+RUN uv pip install --system --no-cache \
     pwntools \
     ROPgadget \
     lz4 zstandard \
-    && pip3 install --no-cache-dir --break-system-packages \
+    && uv pip install --system --no-cache \
     git+https://github.com/marin-m/vmlinux-to-elf
 
 # extract-vmlinux — decompress bzImage → raw vmlinux
