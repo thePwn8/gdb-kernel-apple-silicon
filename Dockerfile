@@ -83,14 +83,18 @@ RUN wget -q https://raw.githubusercontent.com/bata24/gef/dev/install-uv.sh -O- |
 # pwntools — CTF framework (ROP builder, packing, tubes, shellcraft)
 # ROPgadget — ROP gadget finder (different heuristics than ropper)
 # vmlinux-to-elf — recover kallsyms from stripped kernel → symbolized ELF
-# NOTE: uv is installed by gef at /root/.local/bin/uv
-ENV PATH="/root/.local/bin:${PATH}"
-RUN uv pip install --system --no-cache \
-    pwntools \
-    ROPgadget \
-    lz4 zstandard \
-    && uv pip install --system --no-cache \
-    git+https://github.com/marin-m/vmlinux-to-elf
+#
+# gef's install-uv.sh creates a venv at /root/.gef/.venv-gef
+# Install into that venv so all tools share the same Python environment
+ENV PATH="/root/.local/bin:/root/.gef/.venv-gef/bin:${PATH}"
+RUN . /root/.gef/.venv-gef/bin/activate \
+    && uv pip install --no-cache \
+        pwntools \
+        ROPgadget \
+        lz4 zstandard \
+    && uv pip install --no-cache \
+        git+https://github.com/marin-m/vmlinux-to-elf \
+    && echo ". /root/.gef/.venv-gef/bin/activate" >> /root/.bashrc
 
 # extract-vmlinux — decompress bzImage → raw vmlinux
 RUN wget -O /usr/local/bin/extract-vmlinux \
