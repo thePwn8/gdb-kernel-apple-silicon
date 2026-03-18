@@ -1,6 +1,6 @@
-# GDB + bata24/gef for Linux Kernel Debugging on Apple Silicon
+# GDB + bata24/gef for Linux Kernel Exploit Dev on Apple Silicon
 
-> Minimal setup for debugging CTF kernels and writing kernel exploits on Mac M1/M2/M3/M4.
+> Full kernel exploit development environment for Mac M1/M2/M3/M4. Debug CTF kernels, find gadgets, build exploits.
 
 ---
 
@@ -11,24 +11,45 @@ Apple Silicon is ARM64. CTF kernels are x86_64. You need:
 - **QEMU** to boot the x86_64 kernel on Mac
 - **GDB** to connect to QEMU's GDB stub
 - **bata24/gef** for kernel debug commands (`kbase`, `ksymaddr`, `pagewalk`, `slub-dump`)
+- **Exploit dev tools** — ROP finders, pwntools, kernel image extractors
 
-This setup is specifically for **kernel debugging** — GDB connects to QEMU's GDB stub over TCP. No ptrace is involved between GDB and the target. QEMU handles all CPU state inspection internally and exposes it via the GDB remote protocol.
+GDB connects to QEMU's GDB stub over TCP. No ptrace is involved. QEMU handles all CPU state inspection internally and exposes it via the GDB remote protocol.
 
 > **Scope**: This does NOT solve userland debugging on Apple Silicon. Running `gdb ./binary` inside a QEMU-emulated Docker container will fail with `PTRACE_GETREGS: Input/output error` because QEMU's ptrace emulation is incomplete. Kernel debugging works because it bypasses ptrace entirely — QEMU *is* the CPU.
 
 ---
 
-## Why bata24/gef?
+## What's Inside
 
-[bata24/gef](https://github.com/bata24/gef) is a fork of GEF that adds kernel-specific features:
+### Installed by bata24/gef (don't duplicate)
 
-- **Kernel debugging without symbols** — debug Linux kernels 3.x–6.x without a symbolized `vmlinux`
-- **SLUB/SLAB heap analysis** — `slub-dump`, `slub-tiny-dump` for kernel heap exploitation
-- **KASLR handling** — `kbase` to find the kernel base under KASLR
-- **Page table walking** — `pagewalk` for virtual-to-physical translation
-- **Pre-installed tools** — `one_gadget`, `seccomp-tools`, `ropper`, `angr`, `rp++`, `capstone`, `unicorn`, `keystone`
+| Tool | Purpose |
+|------|---------|
+| ropper | ROP gadget finder (Python) |
+| rp++ | ROP gadget finder (C++, fast) |
+| one_gadget | one-shot execve gadgets in libc |
+| seccomp-tools | seccomp filter analysis |
+| capstone | disassembly framework |
+| keystone | assembler framework |
+| unicorn | CPU emulator |
+| angr | symbolic execution |
 
-For kernel exploitation work, it's the most complete GDB setup available.
+### Added by this Dockerfile
+
+| Tool | Purpose |
+|------|---------|
+| **pwntools** | CTF framework — ROP builder, packing, tubes, shellcraft |
+| **ROPgadget** | ROP gadget finder (different heuristics than ropper) |
+| **ropr** | Rust-based ROP finder (fastest on large vmlinux) |
+| **vmlinux-to-elf** | Recover kallsyms from stripped kernel → symbolized ELF |
+| **extract-vmlinux** | Decompress bzImage → raw vmlinux |
+| **musl-tools** | Static linking via musl (small binaries for initramfs) |
+| **checksec** | Binary/kernel security properties |
+| **nasm** | x86/x64 assembler for shellcode stubs |
+| **pahole/dwarves** | Kernel struct layouts from BTF/DWARF |
+| **strace** | Syscall tracing |
+| **busybox-static** | Build minimal initramfs from scratch |
+| **cpio + zstd** | Initrd repacking |
 
 ---
 
@@ -52,7 +73,7 @@ For kernel exploitation work, it's the most complete GDB setup available.
 └───────────────────────────────────────────────┘
 ```
 
-**How it works**: Homebrew's `qemu-system-x86_64` is a native ARM64 binary. It emulates the x86_64 guest CPU via TCG (Tiny Code Generator). The `-gdb` flag exposes a GDB stub over TCP. GDB in Docker connects to this stub via `host.docker.internal` — no ptrace syscalls are needed. QEMU owns the CPU state and serves it over the GDB remote protocol.
+Homebrew's `qemu-system-x86_64` is a native ARM64 binary. It emulates the x86_64 guest via TCG. The `-gdb` flag exposes a GDB stub over TCP. GDB in Docker connects via `host.docker.internal` — no ptrace needed.
 
 ---
 
@@ -125,6 +146,46 @@ gef> c
 
 ---
 
+## Kernel Image Workflow
+
+CTF challenges ship `bzImage` (compressed, stripped). You need symbols for GDB.
+
+```bash
+# Step 1: Decompress bzImage → raw vmlinux
+extract-vmlinux bzImage > vmlinux
+
+# Step 2: Recover symbols from kallsyms (if stripped)
+vmlinux-to-elf vmlinux vmlinux-sym
+
+# Now load the symbolized ELF in GDB
+gef> file /data/vmlinux-sym
+gef> target remote host.docker.internal:1234
+```
+
+`vmlinux-to-elf` extracts the embedded kallsyms table and produces a fully symbolized ELF — the difference between blind exploitation and having function names in GDB.
+
+---
+
+## ROP Gadget Finding
+
+Four finders included — each has different heuristics, use multiple for coverage:
+
+```bash
+# ropr — fastest on large vmlinux (Rust)
+ropr --nojop vmlinux
+
+# ROPgadget — broadest gadget search
+ROPgadget --binary vmlinux --depth 20
+
+# ropper — good filtering options
+ropper -f vmlinux --search "pop rdi"
+
+# rp++ — fast C++ finder
+rp++ -f vmlinux -r 5
+```
+
+---
+
 ## bata24/gef Kernel Commands
 
 ```bash
@@ -151,31 +212,35 @@ gef> lsmod
 
 ---
 
-## Getting vmlinux from bzImage
-
-CTF challenges usually ship `bzImage` (compressed). GDB needs the unstripped `vmlinux` for symbols:
+## Compiling Exploits
 
 ```bash
-curl -sO https://raw.githubusercontent.com/torvalds/linux/master/scripts/extract-vmlinux
-chmod +x extract-vmlinux
-./extract-vmlinux bzImage > vmlinux
+# Standard static build (glibc — larger binary)
+gcc -o exploit exploit.c -static -O2
+
+# musl static build (smaller, cleaner — preferred for initramfs)
+musl-gcc -o exploit exploit.c -static -O2
+
+# With specific kernel headers (if needed)
+gcc -o exploit exploit.c -static -I/path/to/kernel/include
 ```
 
 ---
 
-## Repacking initrd (Getting Your Exploit In)
+## Repacking initrd
 
-After compiling your exploit inside the container, repack it into the initrd so the QEMU guest can run it:
+After compiling your exploit, repack it into the initrd so the QEMU guest can run it:
 
 ```bash
-# Inside the Docker container — compile the exploit
-gcc -o /data/exploit /data/exploit.c -static -O2
-
-# On Mac — repack the initrd with your exploit
+# Unpack
 mkdir /tmp/initrd && cd /tmp/initrd
 zcat /path/to/rootfs.cpio.gz | cpio -idmv
-cp /path/to/exploit .
-find . | cpio -o -H newc | gzip > /path/to/rootfs_patched.cpio.gz
+
+# Add exploit
+cp /data/exploit .
+
+# Repack
+find . | cpio -o -H newc | gzip > /data/rootfs_patched.cpio.gz
 
 # Boot with patched initrd
 bash run-qemu.sh bzImage rootfs_patched.cpio.gz
@@ -183,9 +248,23 @@ bash run-qemu.sh bzImage rootfs_patched.cpio.gz
 
 ---
 
+## Inspecting Kernel Structs
+
+```bash
+# pahole — show struct layout with offsets (needs vmlinux with DWARF/BTF)
+pahole -C task_struct vmlinux
+pahole -C cred vmlinux
+pahole -C file vmlinux
+
+# Show struct size
+pahole -s vmlinux | grep msg_msg
+```
+
+---
+
 ## Mac Networking Gotcha
 
-> ⚠️ `--network=host` on Docker Desktop for Mac attaches to the **Docker VM's** network — not your Mac's. `localhost:1234` inside the container points to the container itself, not QEMU on your Mac.
+> `--network=host` on Docker Desktop for Mac attaches to the **Docker VM's** network — not your Mac's. `localhost:1234` inside the container points to the container itself, not QEMU on your Mac.
 >
 > Use `host.docker.internal:1234` to reach your Mac from inside a container.
 
@@ -204,24 +283,24 @@ Couldn't get CS register: Input/output error.
 
 This happens because the container runs under QEMU user-space emulation, and QEMU's ptrace emulation for child processes is incomplete. There is no clean workaround — this setup is for **kernel debugging only**.
 
-For userland CTF challenges on Apple Silicon, you'll need a different approach (e.g., a Linux VM with full KVM, or an x86_64 remote server).
+For userland CTF challenges on Apple Silicon, use a Linux VM with full KVM or an x86_64 remote server.
 
 ---
 
 ## Troubleshooting
 
 **`Connection refused` on `target remote host.docker.internal:1234`**
-→ QEMU isn't running yet, or it crashed. Check Terminal 1 for kernel panic messages.
+→ QEMU isn't running yet, or it crashed. Check Terminal 1.
 
 **Symbols not resolving after `file vmlinux`**
-→ Make sure you have the unstripped `vmlinux`, not the compressed `vmlinuz` or `bzImage`.
+→ Use `vmlinux-to-elf` to recover kallsyms. The raw `extract-vmlinux` output is often stripped.
 
 **Kernel panic immediately on boot**
 → Try `init=/bin/sh` in APPEND to drop to shell directly.
 → Check `rootfs.cpio.gz` integrity: `file rootfs.cpio.gz`
 
-**Build fails: `E: Unable to locate package libc6:i386`**
-→ Missing `dpkg --add-architecture i386` before `apt-get update`. The provided Dockerfile handles this.
+**Docker build fails with permission error**
+→ `sudo chown -R $(whoami) ~/.docker` — Docker Desktop sometimes creates buildx dirs as root.
 
 ---
 
@@ -229,17 +308,19 @@ For userland CTF challenges on Apple Silicon, you'll need a different approach (
 
 ```
 .
-├── Dockerfile          # GDB + bata24/gef (linux/amd64)
-├── docker-compose.yml  # alternative to alias
-├── .gdbinit            # kernel defaults (intel syntax, pagination off)
+├── Dockerfile          # Full kernel exploit dev environment
+├── docker-compose.yml  # Alternative to alias
+├── .gdbinit            # Kernel defaults (intel syntax, pagination off)
 └── run-qemu.sh         # QEMU launcher with CTF-friendly boot flags
 ```
-
-Place these alongside your challenge files (`bzImage`, `rootfs.cpio.gz`, `vmlinux`).
 
 ---
 
 ## References
 
 - [bata24/gef](https://github.com/bata24/gef) — GDB Enhanced Features (kernel fork)
+- [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf) — Recover symbols from stripped kernels
+- [ropr](https://github.com/Ben-Lichtman/ropr) — Fast Rust ROP gadget finder
+- [ROPgadget](https://github.com/JonathanSalwan/ROPgadget) — ROP gadget finder
+- [pwntools](https://github.com/Gallopsled/pwntools) — CTF exploitation framework
 - [QEMU GDB usage](https://qemu-project.gitlab.io/qemu/system/gdb.html)
