@@ -91,7 +91,26 @@ brew install qemu
 
 ---
 
-## Build
+## Quick Start (Docker Hub)
+
+```bash
+# Pull
+docker pull pwn8/gdb-kernel-apple-silicon:latest
+
+# Add to ~/.zshrc
+alias pwn="docker run --rm -it \
+  --security-opt seccomp=unconfined \
+  --privileged \
+  --cap-add=SYS_PTRACE \
+  --platform=linux/amd64 \
+  -v \$PWD:/data \
+  --add-host=host.docker.internal:host-gateway \
+  pwn8/gdb-kernel-apple-silicon bash"
+```
+
+---
+
+## Build from Source
 
 ```bash
 docker build --platform=linux/amd64 -t gdb-gef .
