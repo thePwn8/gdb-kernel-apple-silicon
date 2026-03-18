@@ -1,0 +1,27 @@
+services:
+  gdb:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+    platform: linux/amd64
+    image: gdb-gef
+    container_name: gdb-gef
+    stdin_open: true
+    tty: true
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp=unconfined
+    privileged: true
+    volumes:
+      - .:/data          # mount challenge dir — vmlinux, bzImage, exploit.c etc.
+    extra_hosts:
+      # Reach QEMU GDB stub on Mac host
+      # Mac runs: bash run-qemu.sh   → GDB stub on :1234
+      # Container: target remote host.docker.internal:1234
+      #
+      # NOTE: network_mode: host does NOT work on Mac Docker Desktop.
+      # host.docker.internal is the correct way to reach the Mac host.
+      - "host.docker.internal:host-gateway"
